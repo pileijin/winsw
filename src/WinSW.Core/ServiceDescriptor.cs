@@ -16,9 +16,7 @@ namespace WinSW
     /// </summary>
     public class ServiceDescriptor : IWinSWConfiguration
     {
-#pragma warning disable S2755 // XML parsers should not be vulnerable to XXE attacks
         protected readonly XmlDocument dom = new XmlDocument();
-#pragma warning restore S2755 // XML parsers should not be vulnerable to XXE attacks
 
         private readonly Dictionary<string, string> environmentVariables;
 
@@ -84,9 +82,7 @@ namespace WinSW
 
         public static ServiceDescriptor FromXML(string xml)
         {
-#pragma warning disable S2755 // XML parsers should not be vulnerable to XXE attacks
             var xmlDom = new XmlDocument();
-#pragma warning restore S2755 // XML parsers should not be vulnerable to XXE attacks
             xmlDom.LoadXml(xml);
             return new ServiceDescriptor(xmlDom);
         }
@@ -372,9 +368,7 @@ namespace WinSW
                     XmlNode? patternNode = this.E.SelectSingleNode("pattern");
                     if (patternNode is null)
                     {
-#pragma warning disable S2372 // Exceptions should not be thrown from property getters
                         throw new InvalidDataException("Time Based rolling policy is specified but no pattern can be found in configuration XML.");
-#pragma warning restore S2372 // Exceptions should not be thrown from property getters
                     }
 
                     return patternNode.InnerText;
@@ -425,9 +419,7 @@ namespace WinSW
                         // validate it
                         if (!int.TryParse(zipolderthannumdaysNode.InnerText, out int zipolderthannumdaysValue))
                         {
-#pragma warning disable S2372 // Exceptions should not be thrown from property getters
                             throw new InvalidDataException("Roll-Size-Time Based rolling policy is specified but zipOlderThanNumDays does not match the int format found in configuration XML.");
-#pragma warning restore S2372 // Exceptions should not be thrown from property getters
                         }
 
                         zipolderthannumdays = zipolderthannumdaysValue;

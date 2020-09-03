@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.IO.Pipes;
 #if NETCOREAPP
 using System.Reflection;
 #endif
@@ -29,6 +30,8 @@ namespace WinSW
 {
     public static class Program
     {
+        private const string NoPipe = "-";
+
         private static readonly ILog Log = LogManager.GetLogger(typeof(Program));
 
         public static int Main(string[] args)
@@ -113,7 +116,31 @@ namespace WinSW
                 _ = ConsoleApis.FreeConsole();
                 _ = ConsoleApis.AttachConsole(ConsoleApis.ATTACH_PARENT_PROCESS);
 
-                args = args.GetRange(1, args.Count - 1);
+                string stdinName = args[1];
+                if (stdinName != NoPipe)
+                {
+                    var stdin = new NamedPipeClientStream(".", stdinName, PipeDirection.In, PipeOptions.Asynchronous);
+                    stdin.Connect();
+                    Console.SetIn(new StreamReader(stdin));
+                }
+
+                string stdoutName = args[2];
+                if (stdoutName != NoPipe)
+                {
+                    var stdout = new NamedPipeClientStream(".", stdoutName, PipeDirection.Out, PipeOptions.Asynchronous);
+                    stdout.Connect();
+                    Console.SetOut(new StreamWriter(stdout) { AutoFlush = true });
+                }
+
+                string stderrName = args[3];
+                if (stderrName != NoPipe)
+                {
+                    var stderr = new NamedPipeClientStream(".", stderrName, PipeDirection.Out, PipeOptions.Asynchronous);
+                    stderr.Connect();
+                    Console.SetError(new StreamWriter(stderr) { AutoFlush = true });
+                }
+
+                args = args.GetRange(4, args.Count - 4);
             }
             else if (Environment.OSVersion.Version.Major == 5)
             {
@@ -182,9 +209,7 @@ namespace WinSW
                 default:
                     Console.WriteLine("Unknown command: " + args[0]);
                     PrintAvailableCommands();
-#pragma warning disable S112 // General exceptions should never be thrown
                     throw new Exception("Unknown command: " + args[0]);
-#pragma warning restore S112 // General exceptions should never be thrown
             }
 
             void Install()
@@ -202,9 +227,7 @@ namespace WinSW
                 {
                     Console.WriteLine("Service with id '" + descriptor.Id + "' already exists");
                     Console.WriteLine("To install the service, delete the existing one or change service Id in the configuration file");
-#pragma warning disable S112 // General exceptions should never be thrown
                     throw new Exception("Installation failure: Service with id '" + descriptor.Id + "' already exists");
-#pragma warning restore S112 // General exceptions should never be thrown
                 }
 
                 string? username = null;
@@ -457,21 +480,30 @@ namespace WinSW
                 Log.Info("Restarting the service with id '" + descriptor.Id + "'");
 
                 // run restart from another process group. see README.md for why this is useful.
-                bool result = ProcessApis.CreateProcess(null, descriptor.ExecutablePath + " restart", IntPtr.Zero, IntPtr.Zero, false, ProcessApis.CREATE_NEW_PROCESS_GROUP, IntPtr.Zero, null, default, out _);
+                bool result = ProcessApis.CreateProcess(
+                    null,
+                    descriptor.ExecutablePath + " restart",
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    false,
+                    ProcessApis.CREATE_NEW_PROCESS_GROUP,
+                    IntPtr.Zero,
+                    null,
+                    default,
+                    out ProcessApis.PROCESS_INFORMATION processInfo);
                 if (!result)
                 {
-#pragma warning disable S112 // General exceptions should never be thrown
                     throw new Exception("Failed to invoke restart: " + Marshal.GetLastWin32Error());
-#pragma warning restore S112 // General exceptions should never be thrown
                 }
+
+                _ = HandleApis.CloseHandle(processInfo.ProcessHandle);
+                _ = HandleApis.CloseHandle(processInfo.ThreadHandle);
             }
 
             void Status()
             {
                 Log.Debug("User requested the status of the process with id '" + descriptor.Id + "'");
-#pragma warning disable S3358 // Ternary operators should not be nested
                 Console.WriteLine(svc is null ? "NonExistent" : svc.Started ? "Started" : "Stopped");
-#pragma warning restore S3358 // Ternary operators should not be nested
             }
 
             void Test()
@@ -508,24 +540,52 @@ namespace WinSW
             {
                 using Process current = Process.GetCurrentProcess();
 
+                string? stdinName = Console.IsInputRedirected ? Guid.NewGuid().ToString() : null;
+                string? stdoutName = Console.IsOutputRedirected ? Guid.NewGuid().ToString() : null;
+                string? stderrName = Console.IsErrorRedirected ? Guid.NewGuid().ToString() : null;
+
+                string arguments = "/elevated " +
+                    " " + (stdinName ?? NoPipe) +
+                    " " + (stdoutName ?? NoPipe) +
+                    " " + (stderrName ?? NoPipe) +
+#if NETCOREAPP
+                    string.Join(' ', args);
+#elif !NET20
+                    string.Join(" ", args);
+#else
+                    string.Join(" ", args.ToArray());
+#endif
+
                 ProcessStartInfo startInfo = new ProcessStartInfo
                 {
                     UseShellExecute = true,
                     Verb = "runas",
                     FileName = current.MainModule.FileName,
-#if NETCOREAPP
-                    Arguments = "/elevated " + string.Join(' ', args),
-#elif !NET20
-                    Arguments = "/elevated " + string.Join(" ", args),
-#else
-                    Arguments = "/elevated " + string.Join(" ", args.ToArray()),
-#endif
+                    Arguments = arguments,
                     WindowStyle = ProcessWindowStyle.Hidden,
                 };
 
                 try
                 {
                     using Process elevated = Process.Start(startInfo);
+
+                    if (stdinName != null)
+                    {
+                        var stdin = new NamedPipeServerStream(stdinName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                        stdin.WaitForConnectionAsync().ContinueWith(_ => Console.OpenStandardInput().CopyToAsync(stdin));
+                    }
+
+                    if (stdoutName != null)
+                    {
+                        var stdout = new NamedPipeServerStream(stdoutName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                        stdout.WaitForConnectionAsync().ContinueWith(_ => stdout.CopyToAsync(Console.OpenStandardOutput()));
+                    }
+
+                    if (stderrName != null)
+                    {
+                        var stderr = new NamedPipeServerStream(stderrName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                        stderr.WaitForConnectionAsync().ContinueWith(_ => stderr.CopyToAsync(Console.OpenStandardError()));
+                    }
 
                     elevated.WaitForExit();
                     Environment.Exit(elevated.ExitCode);
