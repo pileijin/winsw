@@ -3,10 +3,10 @@
 name: 3.0.0-alpha.$(Revision)
 
 trigger:
-- v3
+- create_new_console
 
 pr:
-- v3
+- create_new_console
 
 variables:
 - name: Revision

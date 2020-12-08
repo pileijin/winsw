@@ -8,6 +8,7 @@ namespace WinSW.Native
 {
     internal static class ProcessApis
     {
+        internal const uint CREATE_NEW_CONSOLE = 0x00000010;
         internal const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
 
         [DllImport(Libraries.Kernel32, SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "CreateProcessW")]

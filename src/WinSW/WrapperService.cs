@@ -540,6 +540,8 @@ namespace WinSW
         /// </summary>
         private Process StartProcess(string executable, string? arguments, LogHandler? logHandler = null, Action<Process>? onExited = null)
         {
+            logHandler = null;
+
             var startInfo = new ProcessStartInfo(executable, arguments ?? string.Empty)
             {
                 UseShellExecute = false,
@@ -564,20 +566,31 @@ namespace WinSW
                 }
             }
 
-            bool succeeded = ConsoleApis.AllocConsole(); // inherited
-            Debug.Assert(succeeded);
-            succeeded = ConsoleApis.SetConsoleCtrlHandler(null, false); // inherited
+            bool succeeded = ConsoleApis.SetConsoleCtrlHandler(null, false); // inherited
             Debug.Assert(succeeded);
 
             Process process;
             try
             {
-                process = Process.Start(startInfo)!;
+                if (!ProcessApis.CreateProcess(
+                    null,
+                    $"{executable} {arguments}",
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    true,
+                    ProcessApis.CREATE_NEW_CONSOLE,
+                    IntPtr.Zero,
+                    null,
+                    default,
+                    out var processInfo))
+                {
+                    Throw.Command.Win32Exception();
+                }
+
+                process = Process.GetProcessById(processInfo.ProcessId);
             }
             finally
             {
-                succeeded = ConsoleApis.FreeConsole();
-                Debug.Assert(succeeded);
                 succeeded = ConsoleApis.SetConsoleCtrlHandler(null, true);
                 Debug.Assert(succeeded);
             }
